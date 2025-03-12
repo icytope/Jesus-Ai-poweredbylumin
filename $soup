@@ -1,0 +1,101 @@
+import discord
+import json
+import os
+from discord.ext import commands
+
+# Configuration file path (renamed to soup_config.json)
+config_file = "soup_config.json"
+
+# Check if the config file exists
+def load_config():
+    if os.path.exists(config_file):
+        with open(config_file, 'r') as f:
+            config = json.load(f)
+            return config
+    else:
+        return None
+
+def save_config(token):
+    config = {"bot_token": token}
+    with open(config_file, 'w') as f:
+        json.dump(config, f, indent=4)
+
+# If there's no bot token in the config, ask for it
+def get_bot_token():
+    config = load_config()
+    if config and config.get("bot_token"):
+        return config["bot_token"]
+    else:
+        token = input("Enter your Discord bot token: ")
+        save_config(token)
+        return token
+
+# Initialize the bot with intents
+intents = discord.Intents.default()
+intents.message_content = True  # Make sure to enable message content
+
+bot = commands.Bot(command_prefix="!", intents=intents)
+
+# Define your channel IDs
+public_channel_id = 1345911688901296230  # Where users send messages
+terminal_channel_id = 1345911606541942845  # Where you'll receive messages
+
+# Store message IDs temporarily for responding
+user_message_ids = {}
+
+@bot.event
+async def on_ready():
+    print(f"Bot is logged in as {bot.user}")
+
+@bot.event
+async def on_message(message):
+    # Ignore bot messages to avoid feedback loops
+    if message.author == bot.user:
+        return
+
+    # If the message is from the terminal channel, forward it to the public channel
+    if message.channel.id == terminal_channel_id:
+        public_channel = bot.get_channel(public_channel_id)
+
+        # Forward the message from the terminal channel to the public channel
+        await public_channel.send(message.content)  # Just send the raw content
+
+    # Check if the message is from the public channel (optional)
+    if message.channel.id == public_channel_id:
+        terminal_channel = bot.get_channel(terminal_channel_id)
+
+        # Forward the user's message to the terminal channel
+        forwarded_message = f"**Message from {message.author.name}:**\n{message.content}"
+
+        # Send the forwarded message to the terminal channel
+        await terminal_channel.send(forwarded_message)
+
+        # Optionally, store the message ID and user ID for responding later
+        user_message_ids[message.id] = message.author.id
+    
+    await bot.process_commands(message)
+
+@bot.event
+async def on_message_edit(before, after):
+    # This ensures that edits are captured
+    if after.channel.id == public_channel_id:
+        terminal_channel = bot.get_channel(terminal_channel_id)
+        await terminal_channel.send(f"User {after.author.name} edited their message: {after.content} (Message ID: {after.id})")
+
+@bot.command(name="respond")
+async def respond(ctx, message_id: int, *, response: str):
+    # Get the user ID from the stored message ID
+    if message_id in user_message_ids:
+        user_id = user_message_ids[message_id]
+        user = await bot.fetch_user(user_id)
+        public_channel = bot.get_channel(public_channel_id)
+        
+        # Send the response back to the user's channel
+        await public_channel.send(f"@{user.name}, {response}")
+        await ctx.send(f"Response sent to {user.name}: {response}")
+    else:
+        await ctx.send("Message ID not found, unable to respond.")
+
+# Run the bot with the token
+token = get_bot_token()  # Get the token from the config or ask for it
+bot.run(token)
